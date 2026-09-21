@@ -1,0 +1,10 @@
+# Python dependencies of datalife_histogram_loader/scripts (Python >= 3.10).
+#   pip install -r requirements.txt
+pandas>=2.0          # sort_datalife_stats_by_task.py (stdlib only) / summarize_datalife_histograms.py / datalife_graph_reports.py
+plotly>=5.0          # stage_sankey.html and *_sankey.html (optional: scripts skip the HTML if missing)
+networkx<=2.8.8      # required by datalife/flow-analysis (uses nx.write_gpickle, removed in networkx 3)
+
+# datalife_graph_reports.py also needs the `datalife` package from the DataLife
+# checkout (not on PyPI). Install it editable into the same environment:
+#   pip install -e /pscratch/sd/j/johnpzh/COLLAB_ROOT/datalife/flow-analysis
+# It pulls in pandas, numpy, networkx<=2.8.8, plotly, pyaml, matplotlib.

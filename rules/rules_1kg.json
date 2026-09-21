@@ -1,0 +1,27 @@
+[
+  {"_comment": "Rules for sort_datalife_stats_by_task.py / summarize_datalife_histograms.py (1000-genome, portable_1kg).",
+   "_format":  "Each rule: task + at least one of  op/pattern (some file of that op fullmatches),  all_of [{op,pattern},..] (every entry matches),  none_of [..] (no entry matches),  program (fullmatch on the timer program name).  Rules are tried in order; first match wins; _comment/_format keys are ignored.",
+   "op": "w", "pattern": "chr\\d+n-\\d+-\\d+\\.tar\\.gz",        "task": "individuals"},
+
+  {"_comment": "Write rules first: outputs identify a task; inputs are often shared (mutation_overlap and frequency read the same files).",
+   "op": "w", "pattern": "chr\\d+n\\.tar\\.gz",                  "task": "individuals_merge"},
+
+  {"op": "w", "pattern": "chr\\d+-[A-Z]{3}-freq\\.tar\\.gz",     "task": "frequency"},
+
+  {"op": "w", "pattern": "chr\\d+-[A-Z]{3}\\.tar\\.gz",          "task": "mutation_overlap"},
+
+  {"_comment": "sifting's python process: writes sifted.SIFT.chrN.txt (the write rule alone would do); all_of shown as an example of a read-set condition.",
+   "op": "w", "pattern": "sifted\\.SIFT\\.chr\\d+\\.txt",        "task": "sifting",
+   "all_of": [{"op": "r", "pattern": "ALL\\.chr\\d+\\.phase3.*annotation\\.vcf"}]},
+
+  {"_comment": "sifting's grep child reads the annotation VCF and writes nothing the monitor sees; identified by program name. Change task to sifting_grep to keep it separate (the JSON run labels it sifting).",
+   "op": "r", "pattern": "ALL\\.chr\\d+\\.phase3.*annotation\\.vcf", "program": "grep", "task": "sifting"},
+
+  {"_comment": "Fallbacks for any other read-only reader of the annotation VCF or of the grep output (one pattern per rule keeps the Sankey group labels readable).",
+   "op": "r", "pattern": "ALL\\.chr\\d+\\.phase3.*annotation\\.vcf", "task": "sifting"},
+
+  {"op": "r", "pattern": "SIFT\\.chr\\d+\\.vcf", "task": "sifting"},
+
+  {"_comment": "Not a task rule: read-only pattern so the individuals input gets a readable Sankey label; never matches a process by itself because individuals always writes first.",
+   "op": "r", "pattern": "ALL\\.chr\\d+\\.250000\\.vcf", "task": "individuals"}
+]

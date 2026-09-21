@@ -1,0 +1,14 @@
+# Output
+R.*
+output.*
+output_*
+
+# Python
+__pycache__/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+.obsidian/
+.cursor/
