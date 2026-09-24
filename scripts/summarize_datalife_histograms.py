@@ -13,12 +13,20 @@ Outputs (in --output-dir):
   histogram_per_process_file.csv   one row per (task, pid, file, op) (+ host/program when timer files are found)
   histogram_per_task.csv           per task x op
   histogram_per_file.csv           per file x op
-  stage_sankey.html                stage-level Sankey: tasks x file groups, link width = weighted GB
+  stage_sankey.html                stage-level Sankey: tasks x file groups, link width = bytes_accessed in GB
 
-Columns: bytes_weighted = sum(frequency*access_size); bytes_unique = sum(access_size);
-accesses = sum(frequency); unique_blocks = rows; reread_blocks = rows with frequency>1;
-extent_bytes = (max block+1)*block_size (file-size proxy). Per task: processes = distinct
-pids, files = distinct file names, stat_files = (pid, file) pairs, metrics summed.
+Columns (per histogram = one process x one file x one op; a histogram row is
+"block frequency access_size"):
+  unique_blocks  = rows with frequency > 0          distinct blocks touched
+  accesses       = sum(frequency)                   block accesses, repeats counted
+  reread_blocks  = rows with frequency > 1          blocks touched more than once
+  bytes_unique   = sum(access_size)                 footprint: each block's bytes counted once
+  bytes_accessed = sum(frequency * access_size)     bytes moved, repeats counted (>= bytes_unique)
+  extent_bytes   = (max block + 1) * block_size     file-size proxy from the highest block touched
+  mean_access_size = mean(access_size)              per-process-file table only
+Per task x op: processes = distinct pids, files = distinct file names, stat_files = number of
+histograms (pid, file pairs); the metrics above are summed. Per file x op: processes, tasks (space-
+separated), bytes_accessed / bytes_unique summed, extent_bytes = max.
 
 File groups for the Sankey (first that applies):
   --groups FILE.json     [{"pattern": "<regex>", "group": "<label>"}, ...]   explicit labels
@@ -120,7 +128,7 @@ def main():
             continue
         host, prog, _ = timers.get(pid, ("", "", ""))
         rows.append(dict(task=task, pid=int(pid), host=host, program=prog, file=name, op="read" if op == "r" else "write",
-                         bytes_weighted=int((df.frequency * df.access_size).sum()), bytes_unique=int(df.access_size.sum()),
+                         bytes_accessed=int((df.frequency * df.access_size).sum()), bytes_unique=int(df.access_size.sum()),
                          accesses=int(df.frequency.sum()), unique_blocks=int(len(df)), reread_blocks=int((df.frequency > 1).sum()),
                          extent_bytes=int((df.block.max() + 1) * a.block_size), mean_access_size=float(df.access_size.mean())))
     if not rows:
@@ -129,26 +137,25 @@ def main():
     d.to_csv(os.path.join(a.output_dir, "histogram_per_process_file.csv"), index=False)
 
     per_task = d.groupby(["task", "op"]).agg(processes=("pid", "nunique"), files=("file", "nunique"), stat_files=("file", "size"),
-                                            bytes_weighted=("bytes_weighted", "sum"), bytes_unique=("bytes_unique", "sum"),
+                                            bytes_accessed=("bytes_accessed", "sum"), bytes_unique=("bytes_unique", "sum"),
                                             accesses=("accesses", "sum"), unique_blocks=("unique_blocks", "sum"),
                                             reread_blocks=("reread_blocks", "sum")).reset_index()
-    per_task["GB_weighted"] = per_task.bytes_weighted / 1e9
     per_task.to_csv(os.path.join(a.output_dir, "histogram_per_task.csv"), index=False)
 
     per_file = d.groupby(["file", "op"]).agg(processes=("pid", "nunique"), tasks=("task", lambda s: " ".join(sorted(set(s)))),
-                                            bytes_weighted=("bytes_weighted", "sum"), bytes_unique=("bytes_unique", "sum"),
+                                            bytes_accessed=("bytes_accessed", "sum"), bytes_unique=("bytes_unique", "sum"),
                                             extent_bytes=("extent_bytes", "max")).reset_index()
     per_file.to_csv(os.path.join(a.output_dir, "histogram_per_file.csv"), index=False)
 
     print(per_task.to_string(index=False))
-    print(f"\ntotals: read {int(d[d.op=='read'].bytes_weighted.sum())} B, write {int(d[d.op=='write'].bytes_weighted.sum())} B (weighted)")
+    print(f"\ntotals: read {int(d[d.op=='read'].bytes_accessed.sum())} B, write {int(d[d.op=='write'].bytes_accessed.sum())} B (bytes_accessed)")
 
     if not a.no_sankey:
         groups = build_groups(a)
         edges = collections.Counter()
         for r in d.itertuples():
             g = group_of(r.file, groups)
-            edges[(g, r.task) if r.op == "read" else (r.task, g)] += r.bytes_weighted
+            edges[(g, r.task) if r.op == "read" else (r.task, g)] += r.bytes_accessed
         labels = sorted({k for e in edges for k in e}); idx = {l: i for i, l in enumerate(labels)}
         print("\nstage edges (GB):"); [print(f"  {s:>34} -> {t:<34} {v/1e9:9.3f}") for (s, t), v in sorted(edges.items(), key=lambda kv: -kv[1])]
         try:
@@ -156,7 +163,7 @@ def main():
             fig = go.Figure(go.Sankey(node=dict(label=labels, pad=15),
                                       link=dict(source=[idx[s] for s, t in edges], target=[idx[t] for s, t in edges],
                                                 value=[v / 1e9 for v in edges.values()], label=[f"{v/1e9:.3f} GB" for v in edges.values()])))
-            fig.update_layout(title=f"Stage-level data flow from DataLife histograms ({a.input_dir}); link width = GB (frequency x access_size)")
+            fig.update_layout(title=f"Stage-level data flow from DataLife histograms ({a.input_dir}); link width = bytes_accessed in GB (sum of frequency x access_size)")
             fig.write_html(os.path.join(a.output_dir, "stage_sankey.html"))
         except ImportError:
             print("plotly not installed: skipping stage_sankey.html")

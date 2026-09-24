@@ -179,16 +179,43 @@ Outputs in `OUT/`:
 | `histogram_per_task.csv`         | one row per task x op                                    |
 | `histogram_per_file.csv`         | one row per file x op, with the tasks that touched it    |
 | `histogram_per_process_file.csv` | one row per (task, pid, file, op), with host and program |
-| `stage_sankey.html`              | tasks x file groups, link width = weighted GB            |
+| `stage_sankey.html`              | tasks x file groups, link width = `bytes_accessed` in GB |
 
 
-Columns (per histogram, then summed per task): `unique_blocks` = rows
-(distinct 4 KB blocks touched); `accesses` = sum(frequency); `reread_blocks` =
-rows with frequency > 1; `bytes_unique` = sum(access_size) (footprint);
-`bytes_weighted` = sum(frequency x access_size) (volume including repeats,
-`GB_weighted` = /1e9); `extent_bytes` = (max block + 1) x 4096 (file-size
-proxy). Per task: `processes` = distinct pids, `files` = distinct names,
-`stat_files` = (pid, file) pairs.
+#### Column reference
+
+Every `_r_stat` / `_w_stat` file is one histogram: one process, one file,
+one operation. Its rows are `block frequency access_size`: `block` is the
+block index (4096-byte blocks by default, `--block-size`), `frequency` is how
+many times that block was accessed, and `access_size` is how many bytes of
+the block were touched. Rows with `frequency` 0 are ignored.
+
+Metrics computed per histogram (`histogram_per_process_file.csv`):
+
+| Column | How it is computed | Meaning |
+| --- | --- | --- |
+| `unique_blocks` | number of rows | distinct blocks of the file this process touched |
+| `accesses` | sum(`frequency`) | number of block accesses; a block read three times counts three |
+| `reread_blocks` | number of rows with `frequency` > 1 | blocks touched more than once |
+| `bytes_unique` | sum(`access_size`) | footprint: bytes of the distinct blocks touched, each block counted once (equals the file size for a complete read or write of the file) |
+| `bytes_accessed` | sum(`frequency` x `access_size`) | bytes moved through I/O calls, repeated accesses counted every time; always >= `bytes_unique`, and the difference is re-read/re-written data. This is the number DataLife's graph edges and the Sankey links use. (Called `bytes_weighted` in earlier versions.) |
+| `extent_bytes` | (max `block` + 1) x block size | file-size proxy from the highest block touched |
+| `mean_access_size` | mean(`access_size`) | average bytes touched per block row |
+
+Aggregates:
+
+| File | Grouping | Columns |
+| --- | --- | --- |
+| `histogram_per_task.csv` | task x op | `processes` = distinct pids, `files` = distinct file names, `stat_files` = number of histograms (pid, file pairs); `bytes_accessed`, `bytes_unique`, `accesses`, `unique_blocks`, `reread_blocks` = sums over those histograms |
+| `histogram_per_file.csv` | file x op | `processes` = distinct pids, `tasks` = tasks that touched the file (space-separated); `bytes_accessed`, `bytes_unique` = sums; `extent_bytes` = max |
+
+Example: `individuals_merge,read` has `bytes_unique` 21,143,276 (exactly the
+size of the 300 chunk archives it reads, the same number as
+`individuals,write`) but `bytes_accessed` 64,260,712 because tar re-reads
+each archive about three times.
+
+Units are bytes; divide by 1e9 for GB. The sums are a lower bound of the true
+volume (see "Things to keep in mind").
 
 ### 3. DataLife's own analyzer (optional)
 
@@ -264,19 +291,19 @@ $V $S/summarize_datalife_histograms.py baseline-traces --output-dir baseline-tra
 ```
 
 ```
-             task    op  processes  files  stat_files  bytes_weighted  bytes_unique  accesses  unique_blocks  reread_blocks  GB_weighted
-      individuals  read        300     10         300    571396915200  380932423680 139501800       93001380       46500420   571.396915
-      individuals write        300    300         300        21143276      21143276      5318           5318              0     0.021143
-individuals_merge  read         10    300         300        64260712      21143276     27324           5318            300     0.064261
-individuals_merge write         10     10          10        15508404      15508404      3791           3791              0     0.015508
-          sifting  read         20     21          40     16542230020   12596208056   4038760        3075296         963428    16.542230
-          sifting write         10     10          10         8224105       8224105      2012           2012              0     0.008224
- mutation_overlap  read         70     20         140       195935810     165960172     48531          40621           7091     0.195936
- mutation_overlap write         70     70          70        20189118      20189118      4963           4963              0     0.020189
-        frequency  read         70     20         140       195935810     165960172     48531          40621           7091     0.195936
-        frequency write         70     70          70       173210908     173093293     42333          42289           44     0.173211
+             task    op  processes  files  stat_files  bytes_accessed  bytes_unique  accesses  unique_blocks  reread_blocks
+        frequency  read         70     20         140       195935810     165960172     48531          40621           7091
+        frequency write         70     70          70       173210908     173093293     42333          42289             44
+      individuals  read        300     10         300    571396915200  380932423680 139501800       93001380       46500420
+      individuals write        300    300         300        21143276      21143276      5318           5318              0
+individuals_merge  read         10    300         300        64260712      21143276     27324           5318            300
+individuals_merge write         10     10          10        15508404      15508404      3791           3791              0
+ mutation_overlap  read         70     20         140       195935810     165960172     48531          40621           7091
+ mutation_overlap write         70     70          70        20189118      20189118      4963           4963              0
+          sifting  read         20     21          40     16542230020   12596208056   4038760        3075296         963428
+          sifting write         10     10          10         8224105       8224105      2012           2012              0
 
-totals: read 588395277552 B, write 238275811 B (weighted)
+totals: read 588395277552 B, write 238275811 B (bytes_accessed)
 stage edges (GB):   ALL.chrN.250000.vcf -> individuals 571.397,  ALL.chrN.phase3*annotation.vcf -> sifting 16.465, ...
 ```
 
@@ -298,7 +325,7 @@ The critical path by bytes comes out as `ALL.chr9.250000.vcf -> individuals -> c
 
 - Histogram byte sums are a **lower bound** (roughly 75% of the true volume
 for large sequential reads); exact bytes are in the timer JSON. Say
-"weighted access size" when quoting them.
+"bytes accessed according to the histograms", not "file size", when quoting them.
 - If two tasks read the same file, a read rule cannot separate them; use their
 writes, `all_of`/`none_of` on the read set, or `program`. Two read-only
 tasks with identical programs and inputs cannot be told apart from traces.
