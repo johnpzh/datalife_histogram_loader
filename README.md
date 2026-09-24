@@ -1,7 +1,45 @@
 # datalife_histogram_loader
 
 Tools for loading DataLife's legacy histogram traces (`*_r_stat` / `*_w_stat`
-block histograms) and turning them into per-task I/O summaries.
+block histograms) and turning them into per-task I/O summaries. 
+
+Please note that when the environment variable `DATALIFE_JSON_OUTPUT` is NOT set, DataLife will produce the legacy histogram traces, such as
+
+```
+/pscratch/sd/j/johnpzh/COLLAB_ROOT/workspace/workspace.58172555.test_loop0_1kg_baseline_2node_6000/ALL.chr1.250000.vcf Block no. Frequency Access size in byte
+0 1 4096
+1 1 4096
+2 2 0
+3 1 4096
+4 2 4096
+5 1 4096
+6 2 4096
+7 1 4096
+8 2 4096
+9 1 4096
+10 2 4096
+...
+```
+
+If `export DATALIFE_JSON_OUTPUT=1`, DataLife will produce the trace json files (`*_r_blk_trace.json` and `*_w_blk_trace.json`), such as
+
+```
+{
+    "access_frequency": 464999,
+    "data_volume": 1904627712,
+    "file_name": "ALL.chr1.250000.vcf",
+    "io_blk_range": [
+        0,
+        619986,
+        -1,
+        -2
+    ],
+    "pid": "502375",
+    "task_name": "individuals"
+}
+```
+
+This tool is used for the legacy histogram traces.
 
 
 | Script                                     | Purpose                                                                                                                                                                |
@@ -172,8 +210,7 @@ Writes `NAME_stat_summary.txt`, `NAME_ranking_table_GB.csv`,
 
 ## Step-by-step example: 1000-genome
 
-Traces: `/pscratch/sd/j/johnpzh/COLLAB_ROOT/baseline-traces` (profiled Slurm job
-58172555, two nodes, ten chromosomes). Rules: `rules/rules_1kg.json`.
+Traces: `/pscratch/sd/j/johnpzh/COLLAB_ROOT/baseline-traces` (two nodes, ten chromosomes). Rules: `rules/rules_1kg.json`.
 
 ```bash
 cd /pscratch/sd/j/johnpzh/COLLAB_ROOT                        # $V and $S as set in "Requirements"
@@ -270,5 +307,9 @@ its output files.
 - DataLife measures I/O time, not task time: the timer file's `monitor.read/write/open/close`
 entries are seconds spent inside those calls; no file records how long a task ran.
 
+
+
 ## Open Questions:
+
 1. It seems that DataLife profiling histogram data don't have task time.
+
